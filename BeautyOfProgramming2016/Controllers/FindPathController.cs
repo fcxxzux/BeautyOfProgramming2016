@@ -27,7 +27,7 @@ namespace BeautyOfProgramming2016.Controllers
         // 具体没深究，TODO
         // 参见
         // http://stackoverflow.com/questions/10343632/httpclient-getasync-never-returns-when-using-await-async
-        public async Task<AcademicQueryResponse> GetSpecificInfo(int entityid)
+        public async Task<AcademicQueryResponse> GetSpecificInfo(long entityid)
         {
             return await DeserializedResult("Id=" + entityid);
         }
