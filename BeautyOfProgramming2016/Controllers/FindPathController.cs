@@ -15,7 +15,7 @@ namespace BeautyOfProgramming2016.Controllers {
     public class FindPathController : ApiController {
         public async Task<List<long[]>> GetPath(long id1, long id2) {
             DateTime begin = DateTime.Now;
-            TimeSpan expectTime = new TimeSpan(0, 1, 0);
+            TimeSpan expectTime = new TimeSpan(0, 2, 0);
             List<long[]> ans = new List<long[]>();
             bool isId1Au = await IsPossible("composite(AA.AuId=" + id1 + ")"),
                 isId2Au = await IsPossible("composite(AA.AuId=" + id2 + ")");
@@ -27,7 +27,6 @@ namespace BeautyOfProgramming2016.Controllers {
             HashSet<long> dict = new HashSet<long>();
 
             foreach (Entity x in entitys) {
-                if (ans.Count > 150) break;
                 if (isId1Au) {
                     if (isId2Au) {
                         foreach (Author y in x.AA) {
@@ -134,6 +133,7 @@ namespace BeautyOfProgramming2016.Controllers {
             return tmp.entities != null && tmp.entities.Length > 0;
         }
 
+        private static HttpClient client=new HttpClient();
         private async Task<AcademicQueryResponse> DeserializedResult(
             string expr,
             long count= 10000,
@@ -142,7 +142,7 @@ namespace BeautyOfProgramming2016.Controllers {
             //"Id=2140251882";
             //"Composite(AA.AuN == 'jaime teevan')"
 
-            var client = new HttpClient();
+            client.DefaultRequestHeaders.Connection.Add("keep-alive");
             var queryString = HttpUtility.ParseQueryString(string.Empty);
 
             // Request parameters
