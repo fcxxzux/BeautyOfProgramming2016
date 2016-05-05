@@ -46,13 +46,11 @@ namespace BeautyOfProgramming2016.Controllers {
                             if (DateTime.Now-begin> expectTime) return ans;
                         }
                     }else {
-                        //这篇论文的引文 引用了id2论文
+                        //这个作者的论文 引用了id2论文
                         foreach(long rid in x.RId) {
-                            if (dict.Contains( rid)) continue;
-                            dict.Add(rid);
-                            bool res = await IsPossible("AND(Id=" + rid + ",RId=" + id2 + ")");
-                            if (res) {
-                                ans.Add(new long[] { id1, rid, id2 });
+                            if (rid==id2) {
+                                ans.Add(new long[] { id1, x.Id, id2 });
+                                break;
                             }
                             if (DateTime.Now - begin > expectTime) return ans;
                         }
