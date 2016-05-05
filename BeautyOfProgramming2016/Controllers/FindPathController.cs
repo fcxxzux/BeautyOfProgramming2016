@@ -16,15 +16,48 @@ namespace BeautyOfProgramming2016.Controllers {
         public async Task<List<long[]>> GetPath(long id1, long id2) {
             DateTime begin = DateTime.Now;
             TimeSpan expectTime = new TimeSpan(0, 2, 0);
-            List<long[]> ans = new List<long[]>();
-            bool isId1Au = await IsPossible("composite(AA.AuId=" + id1 + ")"),
-                isId2Au = await IsPossible("composite(AA.AuId=" + id2 + ")");
-            string queryId1 = isId1Au ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
-            string queryId2 = isId2Au ? ("composite(AA.AuId=" + id2 + ")") : ("Id=" + id2);
-            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1); ;
+            IdType Id1Type = (await IsPossible("composite(AA.AuId=" + id1 + ")")) ? IdType.AuId : IdType.EntityId,
+                Id2Type = (await IsPossible("composite(AA.AuId=" + id2 + ")")) ? IdType.AuId : IdType.EntityId;
+            string queryId1 = Id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
+            string required= Id2Type == IdType.AuId? "Id,RId,F.FId,C.CId,J.JId,AA.AuId": "Id,AA.AfId,AA.AuId";
+
+            List<long[]> ans = await OneHopPath(Id1Type,id1, Id2Type,id2);
+
+            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1,10000,required);
             Entity[] entitys = aboutId1.entities;
 
+            return ans;
+        }
+
+        private async Task<List<long[]>> OneHopPath(IdType id1Type, long id1,IdType id2Type, long id2) {
+            List<long[]> ans = new List<long[]>();
             HashSet<long> dict = new HashSet<long>();
+            string required = "";
+            if (id2Type == IdType.EntityId) {
+                if (id1Type == IdType.EntityId) {
+                    required = "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
+                } else if (id1Type == IdType.AuId) {
+                    required = "Id,RId";
+                }else if (id1Type == IdType.AfId) {
+                    required = "AA.AuId";
+                } else {//FId,JId,CId
+                    required = "Id,RId";
+                }
+            } else if (id2Type==IdType.AuId) {
+                if(id1Type == IdType.EntityId) {
+                    required = "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
+                } else if (id1Type == IdType.AuId) {
+                    required = "Id,RId";
+                } else if (id1Type == IdType.AfId) {
+                    required = "Id,AuId";
+                } else {//FId,JId,CId
+                    required = "Id";
+                }
+            } else return ans;
+            if (!isId1Au && !isId2Au) 
+            else if (!isId1Au && isId2Au) required = "Id,RId";
+            else if (isId1Au && !isId2Au) required = "Id,RId";
+            else if (isId1Au && isId2Au) required = "Id,AA.AfId,AA.AuId";
 
             foreach (Entity x in entitys) {
                 if (isId1Au) {
@@ -36,19 +69,19 @@ namespace BeautyOfProgramming2016.Controllers {
                             }
                             //同机构下2个作者
                             if (y.AuId == id1) {
-                                if(dict.Contains(y.AfId))continue;
-                                dict.Add( y.AfId);
-                                bool res = await IsPossible("composite(AND(AA.AfId=" + y.AfId + ",AA.AuId="+id2 + ")");
+                                if (dict.Contains(y.AfId)) continue;
+                                dict.Add(y.AfId);
+                                bool res = await IsPossible("composite(AND(AA.AfId=" + y.AfId + ",AA.AuId=" + id2 + ")");
                                 if (res) {
                                     ans.Add(new long[] { id1, y.AfId, id2 });
                                 }
                             }
-                            if (DateTime.Now-begin> expectTime) return ans;
+                            if (DateTime.Now - begin > expectTime) return ans;
                         }
-                    }else {
-                        //这篇论文的引文 引用了id2论文
-                        foreach(long rid in x.RId) {
-                            if (dict.Contains( rid)) continue;
+                    } else {
+                        //这个作者的论文 引用了id2论文
+                        foreach (long rid in x.RId) {
+                            if (dict.Contains(rid)) continue;
                             dict.Add(rid);
                             bool res = await IsPossible("AND(Id=" + rid + ",RId=" + id2 + ")");
                             if (res) {
@@ -56,7 +89,7 @@ namespace BeautyOfProgramming2016.Controllers {
                             }
                             if (DateTime.Now - begin > expectTime) return ans;
                         }
-                        
+
                     }
                 } else {
                     if (isId2Au) {
@@ -70,7 +103,7 @@ namespace BeautyOfProgramming2016.Controllers {
                             }
                             if (DateTime.Now - begin > expectTime) return ans;
                         }
-                    }else {
+                    } else {
                         //这篇论文的引文 有引文id2
                         foreach (long rid in x.RId) {
                             if (dict.Contains(rid)) continue;
@@ -114,9 +147,6 @@ namespace BeautyOfProgramming2016.Controllers {
                     }
                 }
             }
-
-
-            return ans;
         }
 
         // /FindPath?entityid=2140251882
@@ -129,7 +159,7 @@ namespace BeautyOfProgramming2016.Controllers {
         }
 
         private async Task<bool> IsPossible(string expr) {
-            AcademicQueryResponse tmp = await DeserializedResult(expr,1);
+            AcademicQueryResponse tmp = await DeserializedResult(expr,1,"Id");
             return tmp.entities != null && tmp.entities.Length > 0;
         }
 
@@ -160,5 +190,14 @@ namespace BeautyOfProgramming2016.Controllers {
             AcademicQueryResponse readResult = (AcademicQueryResponse)serializer.ReadObject(mStream);
             return readResult;
         }
+    }
+
+    enum IdType {
+        EntityId,
+        AuId,
+        AfId,
+        CId,
+        JId,
+        FId
     }
 }
