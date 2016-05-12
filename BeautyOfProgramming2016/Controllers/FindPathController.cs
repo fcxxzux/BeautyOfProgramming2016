@@ -22,24 +22,136 @@ namespace BeautyOfProgramming2016.Controllers {
             IdType Id1Type = (await IsPossible("composite(AA.AuId=" + id1 + ")")) ? IdType.AuId : IdType.EntityId,
                 Id2Type = (await IsPossible("composite(AA.AuId=" + id2 + ")")) ? IdType.AuId : IdType.EntityId;
             string queryId1 = Id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
-            string required= Id2Type == IdType.AuId? "Id,RId,F.FId,C.CId,J.JId,AA.AuId": "Id,AA.AfId,AA.AuId";
+            string required = Id2Type == IdType.AuId ? "Id,RId,F.FId,C.CId,J.JId,AA.AuId" : "Id,AA.AfId,AA.AuId";
+            List<long[]> ans = new List<long[]>();
 
-            List<long[]> ans = await OneHopPath(Id1Type,id1, Id2Type,id2);
+            QueryParam queryParam = new QueryParam{ id1Type = Id1Type, id1 = id1, id2Type = Id2Type, id2 = id2 };
+            var oneHop = new ActionBlock<QueryParam> (async (x) => {
+                List<long[]> t = await OneHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
+                lock (ans) {
+                    ans.AddRange(t);
+                }
+            }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            oneHop.Post(queryParam);
 
-            #region 2-Hop
-            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1,10000,required);
+            var twoHop = new ActionBlock<QueryParam>(async (x) => {
+                List<long[]> t = await TwoHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
+                lock (ans) {
+                    ans.AddRange(t);
+                }
+            }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            twoHop.Post(queryParam);
+
+            
+            var threeHop = new ActionBlock<QueryParam>(async (x) => {
+                List<long[]> t = await ThreeHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
+                lock (ans) {
+                    ans.AddRange(t);
+                }
+            }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            threeHop.Post(queryParam);
+            
+
+            oneHop.Complete();
+            twoHop.Complete();
+            threeHop.Complete();
+            oneHop.Completion.Wait();
+            twoHop.Completion.Wait();
+            threeHop.Completion.Wait();
+
+            return ans;
+        }
+
+        private void AddInFront(long x, List<long[]> p,List<long[]>goal) {
+            foreach(long[] y in p) {
+                long[] z = new long[y.Length + 1];
+                y.CopyTo(z, 1);
+                z[0] = x;
+                goal.Add(z);
+            }
+        }
+
+        private async Task<List<long[]>> ThreeHopPath(IdType id1Type, long id1, IdType id2Type, long id2) {
+            List<long[]> ans = new List<long[]>();
+            if (DateTime.Now - begin > expectTime) return ans;
+            
+            string queryId1 = id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
+            string required = id2Type == IdType.AuId ?  "Id" : "Id,RId,AA.AuId";
+
+            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 10000, required);
             Entity[] entitys = aboutId1.entities;
 
-            if (Id1Type == IdType.EntityId) {
+            if (id1Type == IdType.EntityId) {
                 var eachRId = new ActionBlock<long>(async (rid) => {
-                    List<long[]> tans = await OneHopPath(IdType.EntityId, rid, Id2Type, id2);
+                    List<long[]> tans = await TwoHopPath(IdType.EntityId, rid, id2Type, id2);
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
-                },new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
 
-                var eachAuthor = new ActionBlock<Author> (async (y) => {
-                    List<long[]> tans = await OneHopPath(IdType.AuId, y.AuId, Id2Type, id2);
+                var eachAuthor = new ActionBlock<Author>(async (y) => {
+                    List<long[]> tans = await TwoHopPath(IdType.AuId, y.AuId, id2Type, id2);
+                    lock (ans) {
+                        AddInFront(id1, tans, ans);
+                    }
+                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+
+                var MainWork = new ActionBlock<Entity>((x) => {
+                    if (DateTime.Now - begin > expectTime) return;
+                    if (x.RId != null) {
+                        foreach (long rid in x.RId)
+                            eachRId.Post(rid);
+                    }
+                    if (x.AA != null) {
+                        foreach (Author y in x.AA)
+                            eachAuthor.Post(y);
+                    }
+                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                foreach (Entity x in entitys)
+                    MainWork.Post(x);
+                MainWork.Complete();
+                MainWork.Completion.Wait();
+                eachRId.Complete();
+                eachAuthor.Complete();
+                eachRId.Completion.Wait();
+                eachAuthor.Completion.Wait();
+            } else if (id1Type == IdType.AuId) {
+                var MainWork = new ActionBlock<Entity>(async (x) => {
+                    if (DateTime.Now - begin > expectTime) return;
+                    List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
+                    lock (ans) {
+                        AddInFront(id1, tans, ans);
+                    }
+                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                foreach (Entity x in entitys)
+                    MainWork.Post(x);
+                MainWork.Complete();
+                MainWork.Completion.Wait();
+            }
+            
+            return ans;
+        }
+
+        private async Task<List<long[]>> TwoHopPath(IdType id1Type, long id1, IdType id2Type, long id2) {
+            List<long[]> ans = new List<long[]>();
+            if (DateTime.Now - begin > expectTime) return ans;
+
+            string queryId1 = id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
+            string required = id2Type == IdType.AuId ?  "Id,AA.AfId,AA.AuId" : "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
+
+            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 10000, required);
+            Entity[] entitys = aboutId1.entities;
+
+            if (id1Type == IdType.EntityId) {
+                var eachRId = new ActionBlock<long>(async (rid) => {
+                    List<long[]> tans = await OneHopPath(IdType.EntityId, rid, id2Type, id2);
+                    lock (ans) {
+                        AddInFront(id1, tans, ans);
+                    }
+                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+
+                var eachAuthor = new ActionBlock<Author>(async (y) => {
+                    List<long[]> tans = await OneHopPath(IdType.AuId, y.AuId, id2Type, id2);
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
@@ -48,7 +160,7 @@ namespace BeautyOfProgramming2016.Controllers {
                 var MainWork = new ActionBlock<Entity>(async (x) => {
                     if (DateTime.Now - begin > expectTime) return;
                     if (x.RId != null) {
-                        foreach(long rid in x.RId)
+                        foreach (long rid in x.RId)
                             eachRId.Post(rid);
                     }
                     if (x.AA != null) {
@@ -56,19 +168,19 @@ namespace BeautyOfProgramming2016.Controllers {
                             eachAuthor.Post(y);
                     }
                     if (x.C != null) {
-                        List<long[]> tans = await OneHopPath(IdType.CId, x.C.CId, Id2Type, id2);
+                        List<long[]> tans = await OneHopPath(IdType.CId, x.C.CId, id2Type, id2);
                         lock (ans) {
                             AddInFront(id1, tans, ans);
                         }
                     }
                     if (x.J != null) {
-                        List<long[]> tans = await OneHopPath(IdType.JId, x.J.JId, Id2Type, id2);
+                        List<long[]> tans = await OneHopPath(IdType.JId, x.J.JId, id2Type, id2);
                         lock (ans) {
                             AddInFront(id1, tans, ans);
                         }
                     }
                     if (x.F != null) {
-                        List<long[]> tans = await OneHopPath(IdType.FId, x.F.FId, Id2Type, id2);
+                        List<long[]> tans = await OneHopPath(IdType.FId, x.F.FId, id2Type, id2);
                         lock (ans) {
                             AddInFront(id1, tans, ans);
                         }
@@ -82,20 +194,19 @@ namespace BeautyOfProgramming2016.Controllers {
                 eachAuthor.Complete();
                 eachRId.Completion.Wait();
                 eachAuthor.Completion.Wait();
-            } else if (Id1Type == IdType.AuId) {
-
-                var eachAuthor = new ActionBlock<Author> ( async (y) => {
+            } else if (id1Type == IdType.AuId) {
+                var eachAuthor = new ActionBlock<Author>(async (y) => {
                     if (y.AuId == id1) {
-                        List<long[]> tans2 = await OneHopPath(IdType.AfId, y.AfId, Id2Type, id2);
+                        List<long[]> tans2 = await OneHopPath(IdType.AfId, y.AfId, id2Type, id2);
                         lock (ans) {
                             AddInFront(id1, tans2, ans);
                         }
                     }
                 }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
 
-                var MainWork = new ActionBlock<Entity>( async (x) => {
+                var MainWork = new ActionBlock<Entity>(async (x) => {
                     if (DateTime.Now - begin > expectTime) return;
-                    List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, Id2Type, id2);
+                    List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
@@ -112,17 +223,8 @@ namespace BeautyOfProgramming2016.Controllers {
                 eachAuthor.Completion.Wait();
 
             }
-            #endregion
-            return ans;
-        }
 
-        private void AddInFront(long x, List<long[]> p,List<long[]>goal) {
-            foreach(long[] y in p) {
-                long[] z = new long[y.Length + 1];
-                y.CopyTo(z, 1);
-                z[0] = x;
-                goal.Add(z);
-            }
+            return ans;
         }
 
         private async Task<List<long[]>> OneHopPath(IdType id1Type, long id1,IdType id2Type, long id2) {
@@ -195,6 +297,7 @@ namespace BeautyOfProgramming2016.Controllers {
 
             AcademicQueryResponse aboutId1 = await DeserializedResult(query, 10000, required);
             Entity[] entitys = aboutId1.entities;
+            if (entitys == null) return ans;
 
             HashSet<long> dict = new HashSet<long>();
 
@@ -234,12 +337,16 @@ namespace BeautyOfProgramming2016.Controllers {
                     var MainWork = new ActionBlock<Entity>(async (x) => {
                         //这篇论文的引文 有引文id2
                         if (DateTime.Now - begin > expectTime) return;
-                        foreach (long rid in x.RId) {
-                            eachRId.Post(rid);
+                        if (x.RId != null) {
+                            foreach (long rid in x.RId) {
+                                eachRId.Post(rid);
+                            }
                         }
                         //这篇论文的作者中 有人写了id2
-                        foreach (Author y in x.AA) {
-                            eachAuthor.Post(y);
+                        if (x.AA != null) {
+                            foreach (Author y in x.AA) {
+                                eachAuthor.Post(y);
+                            }
                         }
                         //这篇论文的所属期刊/所属会议/所属领域中 有id2
                         if (x.C != null) {
@@ -280,7 +387,7 @@ namespace BeautyOfProgramming2016.Controllers {
                     #endregion
                 } else if (id1Type == IdType.AuId) {
                     //作者id1的论文中有引文id2
-                    foreach(Entity x in entitys) {
+                    foreach (Entity x in entitys) {
                         ans.Add(new long[] { id1, x.Id, id2 });
                     }
                 } else if (id1Type == IdType.AfId) {
@@ -423,5 +530,12 @@ namespace BeautyOfProgramming2016.Controllers {
         CId,
         JId,
         FId
+    }
+
+    struct QueryParam {
+        public IdType id1Type;
+        public long id1;
+        public IdType id2Type;
+        public long id2;
     }
 }
