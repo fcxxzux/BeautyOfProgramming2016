@@ -15,9 +15,9 @@ using System.Threading.Tasks.Dataflow;
 namespace BeautyOfProgramming2016.Controllers {
     public class FindPathController : ApiController {
         private static DateTime begin;
-        private static TimeSpan expectTime = new TimeSpan(0, 2, 0);
+        private static TimeSpan expectTime = new TimeSpan(0, 0, 10);
         private static ExecutionDataflowBlockOptions maxThread = 
-            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = 4 };
+            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = -1 };
         public async Task<List<long[]>> GetPath(long id1, long id2) {
             begin = DateTime.Now;
 
@@ -42,7 +42,7 @@ namespace BeautyOfProgramming2016.Controllers {
             });
             twoHop.Post(queryParam);
 
-            
+            /*
             var threeHop = new ActionBlock<QueryParam>(async (x) => {
                 List<long[]> t = await ThreeHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
                 lock (ans) {
@@ -50,14 +50,14 @@ namespace BeautyOfProgramming2016.Controllers {
                 }
             });
             threeHop.Post(queryParam);
-            
+            */
 
             oneHop.Complete();
             twoHop.Complete();
-            threeHop.Complete();
+            //threeHop.Complete();
             oneHop.Completion.Wait();
             twoHop.Completion.Wait();
-            threeHop.Completion.Wait();
+            //threeHop.Completion.Wait();
 
             return ans;
         }
@@ -206,13 +206,13 @@ namespace BeautyOfProgramming2016.Controllers {
 
                 var MainWork = new ActionBlock<Entity>(async (x) => {
                     if (DateTime.Now - begin > expectTime) return;
-                    List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
-                    }
                     if (x.AA != null) {
                         foreach (Author y in x.AA)
                             eachAuthor.Post(y);
+                    }
+                    List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
+                    lock (ans) {
+                        AddInFront(id1, tans, ans);
                     }
                 }, maxThread);
                 foreach (Entity x in entitys)
