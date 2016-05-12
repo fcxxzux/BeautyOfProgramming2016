@@ -16,13 +16,13 @@ namespace BeautyOfProgramming2016.Controllers {
     public class FindPathController : ApiController {
         private static DateTime begin;
         private static TimeSpan expectTime = new TimeSpan(0, 2, 0);
+        private static ExecutionDataflowBlockOptions maxThread = 
+            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = 4 };
         public async Task<List<long[]>> GetPath(long id1, long id2) {
             begin = DateTime.Now;
 
             IdType Id1Type = (await IsPossible("composite(AA.AuId=" + id1 + ")")) ? IdType.AuId : IdType.EntityId,
                 Id2Type = (await IsPossible("composite(AA.AuId=" + id2 + ")")) ? IdType.AuId : IdType.EntityId;
-            string queryId1 = Id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
-            string required = Id2Type == IdType.AuId ? "Id,RId,F.FId,C.CId,J.JId,AA.AuId" : "Id,AA.AfId,AA.AuId";
             List<long[]> ans = new List<long[]>();
 
             QueryParam queryParam = new QueryParam{ id1Type = Id1Type, id1 = id1, id2Type = Id2Type, id2 = id2 };
@@ -31,7 +31,7 @@ namespace BeautyOfProgramming2016.Controllers {
                 lock (ans) {
                     ans.AddRange(t);
                 }
-            }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            });
             oneHop.Post(queryParam);
 
             var twoHop = new ActionBlock<QueryParam>(async (x) => {
@@ -39,7 +39,7 @@ namespace BeautyOfProgramming2016.Controllers {
                 lock (ans) {
                     ans.AddRange(t);
                 }
-            }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            });
             twoHop.Post(queryParam);
 
             
@@ -48,7 +48,7 @@ namespace BeautyOfProgramming2016.Controllers {
                 lock (ans) {
                     ans.AddRange(t);
                 }
-            }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+            });
             threeHop.Post(queryParam);
             
 
@@ -76,7 +76,7 @@ namespace BeautyOfProgramming2016.Controllers {
             if (DateTime.Now - begin > expectTime) return ans;
             
             string queryId1 = id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
-            string required = id2Type == IdType.AuId ?  "Id" : "Id,RId,AA.AuId";
+            string required = id1Type == IdType.AuId ?  "Id" : "Id,RId,AA.AuId";
 
             AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 10000, required);
             Entity[] entitys = aboutId1.entities;
@@ -87,14 +87,14 @@ namespace BeautyOfProgramming2016.Controllers {
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
 
                 var eachAuthor = new ActionBlock<Author>(async (y) => {
                     List<long[]> tans = await TwoHopPath(IdType.AuId, y.AuId, id2Type, id2);
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
 
                 var MainWork = new ActionBlock<Entity>((x) => {
                     if (DateTime.Now - begin > expectTime) return;
@@ -106,7 +106,7 @@ namespace BeautyOfProgramming2016.Controllers {
                         foreach (Author y in x.AA)
                             eachAuthor.Post(y);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
                 foreach (Entity x in entitys)
                     MainWork.Post(x);
                 MainWork.Complete();
@@ -122,7 +122,7 @@ namespace BeautyOfProgramming2016.Controllers {
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
                 foreach (Entity x in entitys)
                     MainWork.Post(x);
                 MainWork.Complete();
@@ -137,7 +137,7 @@ namespace BeautyOfProgramming2016.Controllers {
             if (DateTime.Now - begin > expectTime) return ans;
 
             string queryId1 = id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
-            string required = id2Type == IdType.AuId ?  "Id,AA.AfId,AA.AuId" : "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
+            string required = id1Type == IdType.AuId ?  "Id,AA.AfId,AA.AuId" : "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
 
             AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 10000, required);
             Entity[] entitys = aboutId1.entities;
@@ -148,14 +148,14 @@ namespace BeautyOfProgramming2016.Controllers {
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
 
                 var eachAuthor = new ActionBlock<Author>(async (y) => {
                     List<long[]> tans = await OneHopPath(IdType.AuId, y.AuId, id2Type, id2);
                     lock (ans) {
                         AddInFront(id1, tans, ans);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
 
                 var MainWork = new ActionBlock<Entity>(async (x) => {
                     if (DateTime.Now - begin > expectTime) return;
@@ -185,7 +185,7 @@ namespace BeautyOfProgramming2016.Controllers {
                             AddInFront(id1, tans, ans);
                         }
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
                 foreach (Entity x in entitys)
                     MainWork.Post(x);
                 MainWork.Complete();
@@ -202,7 +202,7 @@ namespace BeautyOfProgramming2016.Controllers {
                             AddInFront(id1, tans2, ans);
                         }
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
 
                 var MainWork = new ActionBlock<Entity>(async (x) => {
                     if (DateTime.Now - begin > expectTime) return;
@@ -214,7 +214,7 @@ namespace BeautyOfProgramming2016.Controllers {
                         foreach (Author y in x.AA)
                             eachAuthor.Post(y);
                     }
-                }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                }, maxThread);
                 foreach (Entity x in entitys)
                     MainWork.Post(x);
                 MainWork.Complete();
@@ -318,7 +318,7 @@ namespace BeautyOfProgramming2016.Controllers {
                                 ans.Add(new long[] { id1, rid, id2 });
                             }
                         }
-                    }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                    }, maxThread);
 
                     var eachAuthor = new ActionBlock<Author>(async (y) => {
                         if (DateTime.Now - begin > expectTime) return;
@@ -332,7 +332,7 @@ namespace BeautyOfProgramming2016.Controllers {
                                 ans.Add(new long[] { id1, y.AuId, id2 });
                             }
                         }
-                    }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                    }, maxThread);
 
                     var MainWork = new ActionBlock<Entity>(async (x) => {
                         //这篇论文的引文 有引文id2
@@ -374,9 +374,11 @@ namespace BeautyOfProgramming2016.Controllers {
                             }
                         }
                         
-                    }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
-                    foreach (Entity x in entitys) {
-                        MainWork.Post(x);
+                    }, maxThread);
+                    if (entitys != null) {
+                        foreach (Entity x in entitys) {
+                            MainWork.Post(x);
+                        }
                     }
                     MainWork.Complete();
                     MainWork.Completion.Wait();
@@ -416,7 +418,7 @@ namespace BeautyOfProgramming2016.Controllers {
                                 ans.Add(new long[] { id1, rid, id2 });
                             }
                         }
-                    }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                    }, maxThread);
 
                     //遍历所有引文，找作者有id2的引文
                     foreach (Entity x in entitys) {
@@ -440,7 +442,7 @@ namespace BeautyOfProgramming2016.Controllers {
                                 ans.Add(new long[] { id1, y.AfId, id2 });
                             }
                         }
-                    }, new ExecutionDataflowBlockOptions() { MaxDegreeOfParallelism = DataflowBlockOptions.Unbounded });
+                    }, maxThread);
 
                     foreach (Entity x in entitys) {
                         foreach (Author y in x.AA) {
