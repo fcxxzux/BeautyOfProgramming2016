@@ -17,13 +17,38 @@ namespace BeautyOfProgramming2016.Controllers {
         private static DateTime begin;
         private static TimeSpan expectTime = new TimeSpan(0, 0, 10);
         private static ExecutionDataflowBlockOptions maxThread = 
-            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = -1 };
+            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = 8 };
         public async Task<List<long[]>> GetPath(long id1, long id2) {
             begin = DateTime.Now;
-
+            
             IdType Id1Type = (await IsPossible("composite(AA.AuId=" + id1 + ")")) ? IdType.AuId : IdType.EntityId,
                 Id2Type = (await IsPossible("composite(AA.AuId=" + id2 + ")")) ? IdType.AuId : IdType.EntityId;
+
             List<long[]> ans = new List<long[]>();
+
+            #region 0-hop
+            if (Id1Type == IdType.EntityId) {
+                if (Id2Type == IdType.EntityId) {
+                    if(await IsPossible("AND(Id=" + id1 + ",RId=" + id2 + ")")) {
+                        ans.Add(new long[] { id1, id2 });
+                    }
+                } else if (Id2Type == IdType.AuId) {
+                    if (await IsPossible("AND(Id=" + id1 + ",composite(AA.AuId=" + id2 + "))")) {
+                        ans.Add(new long[] { id1, id2 });
+                    }
+                }
+            } else if(Id1Type==IdType.AuId){
+                if (Id2Type == IdType.EntityId) {
+                    if (await IsPossible("AND(Id=" + id2 + ",composite(AA.AuId=" + id1 + "))")) {
+                        ans.Add(new long[] { id1, id2 });
+                    }
+                } else if (Id2Type == IdType.AuId) {
+                    if (await IsPossible("AND(composite(AA.AuId=" + id1 + "),composite(AA.AuId=" + id2 + "))")) {
+                        ans.Add(new long[] { id1, id2 });
+                    }
+                }
+            }
+            #endregion
 
             QueryParam queryParam = new QueryParam{ id1Type = Id1Type, id1 = id1, id2Type = Id2Type, id2 = id2 };
             var oneHop = new ActionBlock<QueryParam> (async (x) => {
@@ -42,22 +67,10 @@ namespace BeautyOfProgramming2016.Controllers {
             });
             twoHop.Post(queryParam);
 
-            /*
-            var threeHop = new ActionBlock<QueryParam>(async (x) => {
-                List<long[]> t = await ThreeHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
-                lock (ans) {
-                    ans.AddRange(t);
-                }
-            });
-            threeHop.Post(queryParam);
-            */
-
             oneHop.Complete();
             twoHop.Complete();
-            //threeHop.Complete();
             oneHop.Completion.Wait();
             twoHop.Completion.Wait();
-            //threeHop.Completion.Wait();
 
             return ans;
         }
@@ -69,67 +82,6 @@ namespace BeautyOfProgramming2016.Controllers {
                 z[0] = x;
                 goal.Add(z);
             }
-        }
-
-        private async Task<List<long[]>> ThreeHopPath(IdType id1Type, long id1, IdType id2Type, long id2) {
-            List<long[]> ans = new List<long[]>();
-            if (DateTime.Now - begin > expectTime) return ans;
-            
-            string queryId1 = id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
-            string required = id1Type == IdType.AuId ?  "Id" : "Id,RId,AA.AuId";
-
-            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 10000, required);
-            Entity[] entitys = aboutId1.entities;
-
-            if (id1Type == IdType.EntityId) {
-                var eachRId = new ActionBlock<long>(async (rid) => {
-                    List<long[]> tans = await TwoHopPath(IdType.EntityId, rid, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
-                    }
-                }, maxThread);
-
-                var eachAuthor = new ActionBlock<Author>(async (y) => {
-                    List<long[]> tans = await TwoHopPath(IdType.AuId, y.AuId, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
-                    }
-                }, maxThread);
-
-                var MainWork = new ActionBlock<Entity>((x) => {
-                    if (DateTime.Now - begin > expectTime) return;
-                    if (x.RId != null) {
-                        foreach (long rid in x.RId)
-                            eachRId.Post(rid);
-                    }
-                    if (x.AA != null) {
-                        foreach (Author y in x.AA)
-                            eachAuthor.Post(y);
-                    }
-                }, maxThread);
-                foreach (Entity x in entitys)
-                    MainWork.Post(x);
-                MainWork.Complete();
-                MainWork.Completion.Wait();
-                eachRId.Complete();
-                eachAuthor.Complete();
-                eachRId.Completion.Wait();
-                eachAuthor.Completion.Wait();
-            } else if (id1Type == IdType.AuId) {
-                var MainWork = new ActionBlock<Entity>(async (x) => {
-                    if (DateTime.Now - begin > expectTime) return;
-                    List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
-                    }
-                }, maxThread);
-                foreach (Entity x in entitys)
-                    MainWork.Post(x);
-                MainWork.Complete();
-                MainWork.Completion.Wait();
-            }
-            
-            return ans;
         }
 
         private async Task<List<long[]>> TwoHopPath(IdType id1Type, long id1, IdType id2Type, long id2) {
@@ -144,16 +96,22 @@ namespace BeautyOfProgramming2016.Controllers {
 
             if (id1Type == IdType.EntityId) {
                 var eachRId = new ActionBlock<long>(async (rid) => {
+                    if (DateTime.Now - begin > expectTime) return;
                     List<long[]> tans = await OneHopPath(IdType.EntityId, rid, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
+                    if (tans.Count > 0) {
+                        lock (ans) {
+                            AddInFront(id1, tans, ans);
+                        }
                     }
                 }, maxThread);
 
                 var eachAuthor = new ActionBlock<Author>(async (y) => {
+                    if (DateTime.Now - begin > expectTime) return;
                     List<long[]> tans = await OneHopPath(IdType.AuId, y.AuId, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
+                    if (tans.Count > 0) {
+                        lock (ans) {
+                            AddInFront(id1, tans, ans);
+                        }
                     }
                 }, maxThread);
 
@@ -169,20 +127,26 @@ namespace BeautyOfProgramming2016.Controllers {
                     }
                     if (x.C != null) {
                         List<long[]> tans = await OneHopPath(IdType.CId, x.C.CId, id2Type, id2);
-                        lock (ans) {
-                            AddInFront(id1, tans, ans);
+                        if (tans.Count > 0) {
+                            lock (ans) {
+                                AddInFront(id1, tans, ans);
+                            }
                         }
                     }
                     if (x.J != null) {
                         List<long[]> tans = await OneHopPath(IdType.JId, x.J.JId, id2Type, id2);
-                        lock (ans) {
-                            AddInFront(id1, tans, ans);
+                        if (tans.Count > 0) {
+                            lock (ans) {
+                                AddInFront(id1, tans, ans);
+                            }
                         }
                     }
                     if (x.F != null) {
                         List<long[]> tans = await OneHopPath(IdType.FId, x.F.FId, id2Type, id2);
-                        lock (ans) {
-                            AddInFront(id1, tans, ans);
+                        if (tans.Count > 0) {
+                            lock (ans) {
+                                AddInFront(id1, tans, ans);
+                            }
                         }
                     }
                 }, maxThread);
@@ -197,9 +161,11 @@ namespace BeautyOfProgramming2016.Controllers {
             } else if (id1Type == IdType.AuId) {
                 var eachAuthor = new ActionBlock<Author>(async (y) => {
                     if (y.AuId == id1) {
-                        List<long[]> tans2 = await OneHopPath(IdType.AfId, y.AfId, id2Type, id2);
-                        lock (ans) {
-                            AddInFront(id1, tans2, ans);
+                        List<long[]> tans = await OneHopPath(IdType.AfId, y.AfId, id2Type, id2);
+                        if (tans.Count > 0) {
+                            lock (ans) {
+                                AddInFront(id1, tans, ans);
+                            }
                         }
                     }
                 }, maxThread);
@@ -211,8 +177,10 @@ namespace BeautyOfProgramming2016.Controllers {
                             eachAuthor.Post(y);
                     }
                     List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
-                    lock (ans) {
-                        AddInFront(id1, tans, ans);
+                    if (tans.Count > 0) {
+                        lock (ans) {
+                            AddInFront(id1, tans, ans);
+                        }
                     }
                 }, maxThread);
                 foreach (Entity x in entitys)
