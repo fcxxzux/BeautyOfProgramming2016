@@ -17,7 +17,7 @@ namespace BeautyOfProgramming2016.Controllers {
         private static DateTime begin;
         private static TimeSpan expectTime = new TimeSpan(0, 0, 10);
         private static ExecutionDataflowBlockOptions maxThread = 
-            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = 8 };
+            new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = -1 };
         public async Task<List<long[]>> GetPath(long id1, long id2) {
             begin = DateTime.Now;
             
@@ -27,31 +27,73 @@ namespace BeautyOfProgramming2016.Controllers {
             List<long[]> ans = new List<long[]>();
 
             #region 0-hop
-            if (Id1Type == IdType.EntityId) {
-                if (Id2Type == IdType.EntityId) {
-                    if(await IsPossible("AND(Id=" + id1 + ",RId=" + id2 + ")")) {
-                        ans.Add(new long[] { id1, id2 });
+            
+            var zeroHop = new ActionBlock<int>(async (xxx) => {
+                if (Id1Type == IdType.EntityId) {
+                    if (Id2Type == IdType.EntityId) {
+                        if (await IsPossible("AND(Id=" + id1 + ",RId=" + id2 + ")")) {
+                            ans.Add(new long[] { id1, id2 });
+                        }
+                    } else if (Id2Type == IdType.AuId) {
+                        if (await IsPossible("AND(Id=" + id1 + ",composite(AA.AuId=" + id2 + "))")) {
+                            ans.Add(new long[] { id1, id2 });
+                        }
                     }
-                } else if (Id2Type == IdType.AuId) {
-                    if (await IsPossible("AND(Id=" + id1 + ",composite(AA.AuId=" + id2 + "))")) {
-                        ans.Add(new long[] { id1, id2 });
+                } else if (Id1Type == IdType.AuId) {
+                    if (Id2Type == IdType.EntityId) {
+                        if (await IsPossible("AND(Id=" + id2 + ",composite(AA.AuId=" + id1 + "))")) {
+                            ans.Add(new long[] { id1, id2 });
+                        }
+                    } else if (Id2Type == IdType.AuId) {
+                        //Impossible
+                        #region Error
+                        /*
+                        //同文章下2个作者
+                        if (await IsPossible("AND(composite(AA.AuId=" + id1 + "),composite(AA.AuId=" + id2 + "))")) {
+                            ans.Add(new long[] { id1, id2 });
+
+                        } else {
+                            //同机构下2个作者
+                            bool flag = false;
+
+                            string required = "Id,AA.AuId,AA.AfId";
+                            string query = "composite(AA.AuId=" + id1 + ")";
+                            AcademicQueryResponse aboutId1 = await DeserializedResult(query, 10000, required);
+                            Entity[] entitys = aboutId1.entities;
+
+                            var MainWork = new ActionBlock<Author>(async (y) => {
+                                if (DateTime.Now - begin > expectTime) return;
+                                bool res = await IsPossible("composite(AND(AA.AfId=" + y.AfId + ",AA.AuId=" + id2 + ")");
+                                if (res) {
+                                    flag = true;
+                                }
+                            }, maxThread);
+                            if (entitys != null) {
+                                foreach (Entity x in entitys) {
+                                    if (x.AA != null) {
+                                        foreach (Author y in x.AA) {
+                                            if (y.AuId == id1 && y.AfId > 0) {
+                                                MainWork.Post(y);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (flag) {
+                                ans.Add(new long[] { id1, id2 });
+                            }
+                        }
+                        */
+                        #endregion
                     }
                 }
-            } else if(Id1Type==IdType.AuId){
-                if (Id2Type == IdType.EntityId) {
-                    if (await IsPossible("AND(Id=" + id2 + ",composite(AA.AuId=" + id1 + "))")) {
-                        ans.Add(new long[] { id1, id2 });
-                    }
-                } else if (Id2Type == IdType.AuId) {
-                    if (await IsPossible("AND(composite(AA.AuId=" + id1 + "),composite(AA.AuId=" + id2 + "))")) {
-                        ans.Add(new long[] { id1, id2 });
-                    }
-                }
-            }
+            });
+            zeroHop.Post(0);
+            
             #endregion
 
-            QueryParam queryParam = new QueryParam{ id1Type = Id1Type, id1 = id1, id2Type = Id2Type, id2 = id2 };
-            var oneHop = new ActionBlock<QueryParam> (async (x) => {
+            QueryParam queryParam = new QueryParam { id1Type = Id1Type, id1 = id1, id2Type = Id2Type, id2 = id2 };
+            var oneHop = new ActionBlock<QueryParam>(async (x) => {
                 List<long[]> t = await OneHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
                 lock (ans) {
                     ans.AddRange(t);
@@ -67,8 +109,10 @@ namespace BeautyOfProgramming2016.Controllers {
             });
             twoHop.Post(queryParam);
 
+            //zeroHop.Complete();
             oneHop.Complete();
             twoHop.Complete();
+            //zeroHop.Completion.Wait();
             oneHop.Completion.Wait();
             twoHop.Completion.Wait();
 
@@ -263,7 +307,7 @@ namespace BeautyOfProgramming2016.Controllers {
                 return ans;
             }
 
-            AcademicQueryResponse aboutId1 = await DeserializedResult(query, 10000, required);
+            AcademicQueryResponse aboutId1 = await DeserializedResult(query, 1000000, required);
             Entity[] entitys = aboutId1.entities;
             if (entitys == null) return ans;
 
@@ -465,7 +509,7 @@ namespace BeautyOfProgramming2016.Controllers {
         private static bool isFirstTime = true;
         private async Task<AcademicQueryResponse> DeserializedResult(
             string expr,
-            long count= 10000,
+            long count= 100000,
             string attributes= "Id,RId,F.FId,C.CId,J.JId,AA.AuId,AA.AfId"
             ) {
             //"Id=2140251882";
@@ -483,13 +527,17 @@ namespace BeautyOfProgramming2016.Controllers {
             queryString["attributes"] = attributes;
             queryString["subscription-key"] = "f7cc29509a8443c5b3a5e56b0e38b5a6";
             var uri = "https://oxfordhk.azure-api.net/academic/v1.0/evaluate?" + queryString;
-
-            var response = await client.GetAsync(uri);
-            
-            var serializer = new DataContractJsonSerializer(typeof(AcademicQueryResponse));
-            var mStream = new MemoryStream(response.Content.ReadAsByteArrayAsync().Result);
-            AcademicQueryResponse readResult = (AcademicQueryResponse)serializer.ReadObject(mStream);
-            return readResult;
+            try {
+                var response = await client.GetAsync(uri);
+                var serializer = new DataContractJsonSerializer(typeof(AcademicQueryResponse));
+                var mStream = new MemoryStream(response.Content.ReadAsByteArrayAsync().Result);
+                AcademicQueryResponse readResult = (AcademicQueryResponse)serializer.ReadObject(mStream);
+                return readResult;
+            } catch {
+                AcademicQueryResponse result = new AcademicQueryResponse();
+                result.entities = new Entity[0];
+                return result;
+            }
         }
     }
 
