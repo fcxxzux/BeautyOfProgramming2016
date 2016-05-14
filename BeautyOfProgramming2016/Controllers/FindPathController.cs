@@ -1,6 +1,7 @@
 ﻿using BeautyOfProgramming2016.Models;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -15,32 +16,37 @@ using System.Threading.Tasks.Dataflow;
 namespace BeautyOfProgramming2016.Controllers {
     public class FindPathController : ApiController {
         private static DateTime begin;
-        private static TimeSpan expectTime = new TimeSpan(0, 0, 10);
+        private static TimeSpan expectTime = new TimeSpan(0, 0, 30);
         private static ExecutionDataflowBlockOptions maxThread = 
             new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = -1 };
         public async Task<List<long[]>> GetPath(long id1, long id2) {
+            //针对单组数据的debug代码
+            //if (id1 != 57898110 || id2 != 2014261844) return new List<long[]>();
             begin = DateTime.Now;
             
             IdType Id1Type = (await IsPossible("composite(AA.AuId=" + id1 + ")")) ? IdType.AuId : IdType.EntityId,
                 Id2Type = (await IsPossible("composite(AA.AuId=" + id2 + ")")) ? IdType.AuId : IdType.EntityId;
 
-            List<long[]> ans = new List<long[]>();
+            BlockingCollection<long[]> ans = new BlockingCollection<long[]>();
 
             #region 0-hop
             
             var zeroHop = new ActionBlock<int>(async (xxx) => {
                 if (Id1Type == IdType.EntityId) {
                     if (Id2Type == IdType.EntityId) {
+                        //直接论文引用
                         if (await IsPossible("AND(Id=" + id1 + ",RId=" + id2 + ")")) {
                             ans.Add(new long[] { id1, id2 });
                         }
                     } else if (Id2Type == IdType.AuId) {
+                        //论文id1有作者id2
                         if (await IsPossible("AND(Id=" + id1 + ",composite(AA.AuId=" + id2 + "))")) {
                             ans.Add(new long[] { id1, id2 });
                         }
                     }
                 } else if (Id1Type == IdType.AuId) {
                     if (Id2Type == IdType.EntityId) {
+                        //作者id1参与论文id2
                         if (await IsPossible("AND(Id=" + id2 + ",composite(AA.AuId=" + id1 + "))")) {
                             ans.Add(new long[] { id1, id2 });
                         }
@@ -95,31 +101,31 @@ namespace BeautyOfProgramming2016.Controllers {
             QueryParam queryParam = new QueryParam { id1Type = Id1Type, id1 = id1, id2Type = Id2Type, id2 = id2 };
             var oneHop = new ActionBlock<QueryParam>(async (x) => {
                 List<long[]> t = await OneHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
-                lock (ans) {
-                    ans.AddRange(t);
+                foreach (long[] tar in t) {
+                    ans.Add(tar);
                 }
             });
             oneHop.Post(queryParam);
 
             var twoHop = new ActionBlock<QueryParam>(async (x) => {
                 List<long[]> t = await TwoHopPath(x.id1Type, x.id1, x.id2Type, x.id2);
-                lock (ans) {
-                    ans.AddRange(t);
+                foreach (long[] tar in t) {
+                    ans.Add(tar);
                 }
             });
             twoHop.Post(queryParam);
 
-            //zeroHop.Complete();
+            zeroHop.Complete();
             oneHop.Complete();
             twoHop.Complete();
-            //zeroHop.Completion.Wait();
+            zeroHop.Completion.Wait();
             oneHop.Completion.Wait();
             twoHop.Completion.Wait();
 
-            return ans;
+            return ans.ToList();
         }
 
-        private void AddInFront(long x, List<long[]> p,List<long[]>goal) {
+        private void AddInFront(long x, List<long[]> p, BlockingCollection<long[]>goal) {
             foreach(long[] y in p) {
                 long[] z = new long[y.Length + 1];
                 y.CopyTo(z, 1);
@@ -129,13 +135,13 @@ namespace BeautyOfProgramming2016.Controllers {
         }
 
         private async Task<List<long[]>> TwoHopPath(IdType id1Type, long id1, IdType id2Type, long id2) {
-            List<long[]> ans = new List<long[]>();
-            if (DateTime.Now - begin > expectTime) return ans;
+            BlockingCollection<long[]> ans = new BlockingCollection<long[]>();
+            if (DateTime.Now - begin > expectTime) return ans.ToList();
 
             string queryId1 = id1Type == IdType.AuId ? ("composite(AA.AuId=" + id1 + ")") : ("Id=" + id1);
             string required = id1Type == IdType.AuId ?  "Id,AA.AfId,AA.AuId" : "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
 
-            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 10000, required);
+            AcademicQueryResponse aboutId1 = await DeserializedResult(queryId1, 800000, required);
             Entity[] entitys = aboutId1.entities;
 
             if (id1Type == IdType.EntityId) {
@@ -143,9 +149,7 @@ namespace BeautyOfProgramming2016.Controllers {
                     if (DateTime.Now - begin > expectTime) return;
                     List<long[]> tans = await OneHopPath(IdType.EntityId, rid, id2Type, id2);
                     if (tans.Count > 0) {
-                        lock (ans) {
-                            AddInFront(id1, tans, ans);
-                        }
+                        AddInFront(id1, tans, ans);
                     }
                 }, maxThread);
 
@@ -153,9 +157,15 @@ namespace BeautyOfProgramming2016.Controllers {
                     if (DateTime.Now - begin > expectTime) return;
                     List<long[]> tans = await OneHopPath(IdType.AuId, y.AuId, id2Type, id2);
                     if (tans.Count > 0) {
-                        lock (ans) {
-                            AddInFront(id1, tans, ans);
-                        }
+                        AddInFront(id1, tans, ans);
+                    }
+                }, maxThread);
+
+                var eachField = new ActionBlock<long>(async (x) => {
+                    if (DateTime.Now - begin > expectTime) return;
+                    List<long[]> tans = await OneHopPath(IdType.FId, x, id2Type, id2);
+                    if (tans.Count > 0) {
+                        AddInFront(id1, tans, ans);
                     }
                 }, maxThread);
 
@@ -172,25 +182,18 @@ namespace BeautyOfProgramming2016.Controllers {
                     if (x.C != null) {
                         List<long[]> tans = await OneHopPath(IdType.CId, x.C.CId, id2Type, id2);
                         if (tans.Count > 0) {
-                            lock (ans) {
-                                AddInFront(id1, tans, ans);
-                            }
+                            AddInFront(id1, tans, ans);
                         }
                     }
                     if (x.J != null) {
                         List<long[]> tans = await OneHopPath(IdType.JId, x.J.JId, id2Type, id2);
                         if (tans.Count > 0) {
-                            lock (ans) {
-                                AddInFront(id1, tans, ans);
-                            }
+                            AddInFront(id1, tans, ans);
                         }
                     }
                     if (x.F != null) {
-                        List<long[]> tans = await OneHopPath(IdType.FId, x.F.FId, id2Type, id2);
-                        if (tans.Count > 0) {
-                            lock (ans) {
-                                AddInFront(id1, tans, ans);
-                            }
+                        foreach(FieldOfStudy ff in x.F) {
+                            eachField.Post(ff.FId);
                         }
                     }
                 }, maxThread);
@@ -200,16 +203,16 @@ namespace BeautyOfProgramming2016.Controllers {
                 MainWork.Completion.Wait();
                 eachRId.Complete();
                 eachAuthor.Complete();
+                eachField.Complete();
                 eachRId.Completion.Wait();
                 eachAuthor.Completion.Wait();
+                eachField.Completion.Wait();
             } else if (id1Type == IdType.AuId) {
                 var eachAuthor = new ActionBlock<Author>(async (y) => {
-                    if (y.AuId == id1) {
+                    if (y.AuId == id1 && y.AfId>0) {
                         List<long[]> tans = await OneHopPath(IdType.AfId, y.AfId, id2Type, id2);
                         if (tans.Count > 0) {
-                            lock (ans) {
-                                AddInFront(id1, tans, ans);
-                            }
+                            AddInFront(id1, tans, ans);
                         }
                     }
                 }, maxThread);
@@ -222,9 +225,7 @@ namespace BeautyOfProgramming2016.Controllers {
                     }
                     List<long[]> tans = await OneHopPath(IdType.EntityId, x.Id, id2Type, id2);
                     if (tans.Count > 0) {
-                        lock (ans) {
-                            AddInFront(id1, tans, ans);
-                        }
+                        AddInFront(id1, tans, ans);
                     }
                 }, maxThread);
                 foreach (Entity x in entitys)
@@ -236,12 +237,12 @@ namespace BeautyOfProgramming2016.Controllers {
 
             }
 
-            return ans;
+            return ans.ToList();
         }
 
         private async Task<List<long[]>> OneHopPath(IdType id1Type, long id1,IdType id2Type, long id2) {
-            List<long[]> ans = new List<long[]>();
-            if (DateTime.Now - begin > expectTime) return ans;
+            BlockingCollection<long[]> ans = new BlockingCollection<long[]>();
+            if (DateTime.Now - begin > expectTime) return ans.ToList();
 
             string required = "";
             string query = "";
@@ -249,6 +250,7 @@ namespace BeautyOfProgramming2016.Controllers {
                 if (id1Type == IdType.EntityId) {
                     //论文id1的引文中有引文id2
                     //或者2篇论文有共同作者/学术领域/期刊/会议
+                    //TODO : boost here
                     required = "Id,RId,F.FId,C.CId,J.JId,AA.AuId";
                     query = "Id=" + id1;
                 } else if (id1Type == IdType.AuId) {
@@ -286,7 +288,7 @@ namespace BeautyOfProgramming2016.Controllers {
                     query = "composite(AA.AuId=" + id1 + ")";
                 } else if (id1Type == IdType.AfId) {
                     // Impossible
-                    return ans;
+                    return ans.ToList();
                 } else {//FId,JId,CId
                     //这个会议/期刊/学术领域中有id2作者的论文
                     required = "Id";
@@ -304,12 +306,12 @@ namespace BeautyOfProgramming2016.Controllers {
                     query += "),composite(AA.AuId=" + id2 + "))";
                 }
             } else {
-                return ans;
+                return ans.ToList();
             }
 
-            AcademicQueryResponse aboutId1 = await DeserializedResult(query, 1000000, required);
+            AcademicQueryResponse aboutId1 = await DeserializedResult(query, 800000, required);
             Entity[] entitys = aboutId1.entities;
-            if (entitys == null) return ans;
+            if (entitys == null) return ans.ToList();
 
             HashSet<long> dict = new HashSet<long>();
 
@@ -324,11 +326,9 @@ namespace BeautyOfProgramming2016.Controllers {
                         lock (dict) {
                             dict.Add(rid);
                         }
-                        bool res = await IsPossible("AND(Id=" + rid + ",RId=" + id2 + "))");
+                        bool res = await IsPossible("AND(Id=" + rid + ",RId=" + id2 + ")");
                         if (res) {
-                            lock (ans) {
-                                ans.Add(new long[] { id1, rid, id2 });
-                            }
+                            ans.Add(new long[] { id1, rid, id2 });
                         }
                     }, maxThread);
 
@@ -340,9 +340,19 @@ namespace BeautyOfProgramming2016.Controllers {
                         }
                         bool res = await IsPossible("AND(composite(AA.AuId=" + y.AuId + "),Id=" + id2 + ")");
                         if (res) {
-                            lock (ans) {
-                                ans.Add(new long[] { id1, y.AuId, id2 });
-                            }
+                            ans.Add(new long[] { id1, y.AuId, id2 });
+                        }
+                    }, maxThread);
+
+                    var eachField = new ActionBlock<long>(async (x) => {
+                        if (DateTime.Now - begin > expectTime) return;
+                        if (dict.Contains(x)) return;
+                        lock (dict) {
+                            dict.Add(x);
+                        }
+                        bool res = await IsPossible("AND(composite(F.FId=" + x + "),Id=" + id2 + ")");
+                        if (res) {
+                            ans.Add(new long[] { id1, x, id2 });
                         }
                     }, maxThread);
 
@@ -364,25 +374,18 @@ namespace BeautyOfProgramming2016.Controllers {
                         if (x.C != null) {
                             bool res = await IsPossible("AND(composite(C.CId=" + x.C.CId + "),Id=" + id2 + ")");
                             if (res) {
-                                lock (ans) {
-                                    ans.Add(new long[] { id1, x.C.CId, id2 });
-                                }
+                                ans.Add(new long[] { id1, x.C.CId, id2 });
                             }
                         }
                         if (x.J != null) {
                             bool res = await IsPossible("AND(composite(J.JId=" + x.J.JId + "),Id=" + id2 + ")");
                             if (res) {
-                                lock (ans) {
-                                    ans.Add(new long[] { id1, x.J.JId, id2 });
-                                }
+                                ans.Add(new long[] { id1, x.J.JId, id2 });
                             }
                         }
                         if (x.F != null) {
-                            bool res = await IsPossible("AND(composite(F.FId=" + x.F.FId + "),Id=" + id2 + ")");
-                            if (res) {
-                                lock (ans) {
-                                    ans.Add(new long[] { id1, x.F.FId, id2 });
-                                }
+                            foreach(FieldOfStudy xx in x.F) {
+                                eachField.Post(xx.FId);
                             }
                         }
                         
@@ -396,8 +399,10 @@ namespace BeautyOfProgramming2016.Controllers {
                     MainWork.Completion.Wait();
                     eachRId.Complete();
                     eachAuthor.Complete();
+                    eachField.Complete();
                     eachRId.Completion.Wait();
                     eachAuthor.Completion.Wait();
+                    eachField.Completion.Wait();
                     #endregion
                 } else if (id1Type == IdType.AuId) {
                     //作者id1的论文中有引文id2
@@ -426,9 +431,7 @@ namespace BeautyOfProgramming2016.Controllers {
                         if (DateTime.Now - begin > expectTime) return;
                         bool res = await IsPossible("AND(Id=" + rid + ",composite(AA.AuId=" + id2 + "))");
                         if (res) {
-                            lock (ans) {
-                                ans.Add(new long[] { id1, rid, id2 });
-                            }
+                            ans.Add(new long[] { id1, rid, id2 });
                         }
                     }, maxThread);
 
@@ -448,11 +451,9 @@ namespace BeautyOfProgramming2016.Controllers {
 
                     var MainWork = new ActionBlock<Author>(async (y) => {
                         if (DateTime.Now - begin > expectTime) return;
-                        bool res = await IsPossible("composite(AND(AA.AfId=" + y.AfId + ",AA.AuId=" + id2 + ")");
+                        bool res = await IsPossible("composite(AND(AA.AfId=" + y.AfId + ",AA.AuId=" + id2 + "))");
                         if (res) {
-                            lock (ans) {
-                                ans.Add(new long[] { id1, y.AfId, id2 });
-                            }
+                            ans.Add(new long[] { id1, y.AfId, id2 });
                         }
                     }, maxThread);
 
@@ -460,9 +461,7 @@ namespace BeautyOfProgramming2016.Controllers {
                         foreach (Author y in x.AA) {
                             //同文章下2个作者
                             if (y.AuId == id2) {
-                                lock (ans) {
-                                    ans.Add(new long[] { id1, x.Id, id2 });
-                                }
+                                ans.Add(new long[] { id1, x.Id, id2 });
                             }
                             //同机构下2个作者
                             if (y.AuId == id1 && y.AfId>0) {
@@ -477,7 +476,7 @@ namespace BeautyOfProgramming2016.Controllers {
                     #endregion
                 } else if (id1Type == IdType.AfId) {
                     // Impossible
-                    return ans;
+                    return ans.ToList();
                 } else {//FId,JId,CId
                     //这个会议/期刊/学术领域中有id2作者的论文
                     foreach (Entity x in entitys) {
@@ -485,10 +484,10 @@ namespace BeautyOfProgramming2016.Controllers {
                     }
                 }
             } else {
-                return ans;
+                return ans.ToList();
             }
 
-            return ans;
+            return ans.ToList();
         }
 
         // /FindPath?entityid=2140251882
@@ -527,17 +526,15 @@ namespace BeautyOfProgramming2016.Controllers {
             queryString["attributes"] = attributes;
             queryString["subscription-key"] = "f7cc29509a8443c5b3a5e56b0e38b5a6";
             var uri = "https://oxfordhk.azure-api.net/academic/v1.0/evaluate?" + queryString;
+            AcademicQueryResponse readResult = new AcademicQueryResponse();
             try {
                 var response = await client.GetAsync(uri);
                 var serializer = new DataContractJsonSerializer(typeof(AcademicQueryResponse));
                 var mStream = new MemoryStream(response.Content.ReadAsByteArrayAsync().Result);
-                AcademicQueryResponse readResult = (AcademicQueryResponse)serializer.ReadObject(mStream);
-                return readResult;
-            } catch {
-                AcademicQueryResponse result = new AcademicQueryResponse();
-                result.entities = new Entity[0];
-                return result;
+                readResult= (AcademicQueryResponse)serializer.ReadObject(mStream);                
+            } catch(Exception ex) {
             }
+            return readResult;
         }
     }
 

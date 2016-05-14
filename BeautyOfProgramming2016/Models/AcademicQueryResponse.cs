@@ -27,7 +27,7 @@ namespace BeautyOfProgramming2016.Models
         [DataMember]
         public Journal J;
         [DataMember]
-        public FieldOfStudy F;
+        public FieldOfStudy[] F;
         [DataMember]
         public Author[] AA;
     }
