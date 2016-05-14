@@ -179,6 +179,11 @@ namespace BeautyOfProgramming2016.Controllers {
                         foreach (Author y in x.AA)
                             eachAuthor.Post(y);
                     }
+                    if (x.F != null) {
+                        foreach (FieldOfStudy ff in x.F) {
+                            eachField.Post(ff.FId);
+                        }
+                    }
                     if (x.C != null) {
                         List<long[]> tans = await OneHopPath(IdType.CId, x.C.CId, id2Type, id2);
                         if (tans.Count > 0) {
@@ -189,11 +194,6 @@ namespace BeautyOfProgramming2016.Controllers {
                         List<long[]> tans = await OneHopPath(IdType.JId, x.J.JId, id2Type, id2);
                         if (tans.Count > 0) {
                             AddInFront(id1, tans, ans);
-                        }
-                    }
-                    if (x.F != null) {
-                        foreach(FieldOfStudy ff in x.F) {
-                            eachField.Post(ff.FId);
                         }
                     }
                 }, maxThread);
@@ -322,10 +322,6 @@ namespace BeautyOfProgramming2016.Controllers {
                     #region 论文->x->论文
                     var eachRId = new ActionBlock<long>(async (rid) => {
                         if (DateTime.Now - begin > expectTime) return;
-                        if (dict.Contains(rid)) return;
-                        lock (dict) {
-                            dict.Add(rid);
-                        }
                         bool res = await IsPossible("AND(Id=" + rid + ",RId=" + id2 + ")");
                         if (res) {
                             ans.Add(new long[] { id1, rid, id2 });
@@ -334,10 +330,6 @@ namespace BeautyOfProgramming2016.Controllers {
 
                     var eachAuthor = new ActionBlock<Author>(async (y) => {
                         if (DateTime.Now - begin > expectTime) return;
-                        if (dict.Contains(y.AuId)) return;
-                        lock (dict) {
-                            dict.Add(y.AuId);
-                        }
                         bool res = await IsPossible("AND(composite(AA.AuId=" + y.AuId + "),Id=" + id2 + ")");
                         if (res) {
                             ans.Add(new long[] { id1, y.AuId, id2 });
@@ -346,10 +338,6 @@ namespace BeautyOfProgramming2016.Controllers {
 
                     var eachField = new ActionBlock<long>(async (x) => {
                         if (DateTime.Now - begin > expectTime) return;
-                        if (dict.Contains(x)) return;
-                        lock (dict) {
-                            dict.Add(x);
-                        }
                         bool res = await IsPossible("AND(composite(F.FId=" + x + "),Id=" + id2 + ")");
                         if (res) {
                             ans.Add(new long[] { id1, x, id2 });
@@ -357,8 +345,8 @@ namespace BeautyOfProgramming2016.Controllers {
                     }, maxThread);
 
                     var MainWork = new ActionBlock<Entity>(async (x) => {
-                        //这篇论文的引文 有引文id2
                         if (DateTime.Now - begin > expectTime) return;
+                        //这篇论文的引文 有引文id2
                         if (x.RId != null) {
                             foreach (long rid in x.RId) {
                                 eachRId.Post(rid);
@@ -371,6 +359,11 @@ namespace BeautyOfProgramming2016.Controllers {
                             }
                         }
                         //这篇论文的所属期刊/所属会议/所属领域中 有id2
+                        if (x.F != null) {
+                            foreach (FieldOfStudy xx in x.F) {
+                                eachField.Post(xx.FId);
+                            }
+                        }
                         if (x.C != null) {
                             bool res = await IsPossible("AND(composite(C.CId=" + x.C.CId + "),Id=" + id2 + ")");
                             if (res) {
@@ -383,12 +376,6 @@ namespace BeautyOfProgramming2016.Controllers {
                                 ans.Add(new long[] { id1, x.J.JId, id2 });
                             }
                         }
-                        if (x.F != null) {
-                            foreach(FieldOfStudy xx in x.F) {
-                                eachField.Post(xx.FId);
-                            }
-                        }
-                        
                     }, maxThread);
                     if (entitys != null) {
                         foreach (Entity x in entitys) {
@@ -438,8 +425,6 @@ namespace BeautyOfProgramming2016.Controllers {
                     //遍历所有引文，找作者有id2的引文
                     foreach (Entity x in entitys) {
                         foreach (long rid in x.RId) {
-                            if (dict.Contains(rid)) continue;
-                            dict.Add(rid);
                             MainWork.Post(rid);
                         }
                     }
