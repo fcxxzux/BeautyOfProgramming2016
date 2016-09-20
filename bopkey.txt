@@ -1,0 +1,75 @@
+一．学术搜索大赛专用Key
+
+今年编程之美挑战赛复赛需要使用微软Oxford学术搜索API，由于免费订阅的Key存在一些限制，所以针对本次大赛，Azure特推出微软Oxford学术搜索旗舰Key，此Key对MAG数据库访问次数与访问频率不做限制。
+
+ 
+
+Key: f7cc29509a8443c5b3a5e56b0e38b5a6
+
+访问方式：https://oxfordhk.azure-api.net/academic/v1.0/evaluate? + expr + &subscription-key=f7cc29509a8443c5b3a5e56b0e38b5a6
+
+提醒：请使用以上访问方式，此key不可以使用学术搜索官网提供的访问方式。
+
+ 
+
+例如搜索Id=2140251882的paper信息，搜索连接如下：https://oxfordhk.azure-api.net/academic/v1.0/evaluate?expr=Id=2140251882&count=10000&attributes=Id,AA.AuId,AA.AfId&subscription-key=f7cc29509a8443c5b3a5e56b0e38b5a6
+
+返回内容为：
+
+{
+
+"expr" : "Id=2140251882",
+
+"entities" :
+
+[{ "logprob":-16.731, "Id":2140251882, "AA":[{"AuId":2145115012,"AfId":1290206253}, {"AuId":2294766364,"AfId":1290206253}, {"AuId":2125800575,"AfId":1290206253}, {"AuId":2134693834,"AfId":1290206253}] }]
+
+}
+
+ 
+
+二．提交信息提醒
+
+请尚未提交队长信息的队伍尽快将通过此链接提交相关信息，我们会在两三个工作日左右给提交的队伍发放redeem code，同时会给所有队伍发送使用redeem code注册Azure账号的教程以及Azure使用教程。
+
+ 
+
+三．Azure线上培训及工程师答疑
+
+ 
+
+为了帮助大家更好的使用Azure，我们将在5月4日晚上推出2016编程之美挑战赛“凌云之智”系列分享之Azure课程，内容包括：
+
+ 
+
+1.Azure的简单介绍
+2.在Azure平台上建立虚拟机的具体步骤及注意事项
+3.如何在Azure平台上建立Linux虚拟机
+4.如何连接已经建立的虚拟机
+5.如何在Azure虚拟机上运行自己所写的程序
+6.虚拟机的性能的高低是否会影响到选手的成绩
+7.比赛的评价系统及流程
+
+具体信息请关注编程之美微信公众号：微软学生俱乐部（msramsc）。
+
+ 
+
+ 
+
+四．其他
+
+1.MAG数据库中所有类型的Id都是不重复的。
+
+2.所有与MAG数据库的交互请使用微软Oxford学术搜索API，其他方式会被判别为作弊行为。
+
+3.评测系统将在大家申请到Azure账号后公布。
+
+ 
+
+如果遇到任何问题，请通过邮件与我们联系，我们会尽快回复。
+
+ 
+
+Regards,
+
+BOP Team
